@@ -1,0 +1,22 @@
+[project]
+name = "spectralvit"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "ipykernel>=7.1.0",
+    "matplotlib>=3.10.8",
+    "opencv-python>=4.12.0.88",
+    "pandas>=2.3.3",
+    "polars>=1.36.1",
+    "scikit-learn>=1.8.0",
+    "torch>=2.9.1",
+    "torchaudio>=2.9.1",
+    "torchvision>=0.24.1",
+    "tqdm>=4.66.5",
+]
+
+[[tool.uv.index]]
+url = "https://download.pytorch.org/whl/cu128"
+default = false
