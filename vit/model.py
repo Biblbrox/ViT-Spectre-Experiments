@@ -5,6 +5,7 @@ from torch.nn import functional as F
 import warnings
 import copy
 from torch.nn.modules.transformer import _detect_is_causal_mask, _get_clones, _get_activation_fn, _get_seq_len
+from pytorch_wavelets import DWT1DForward, DWT1DInverse  # or simply DWT1D, IDWT1D
 
 
 class PatchEmbedding(nn.Module):
@@ -54,17 +55,38 @@ def transform(x, method='fft', threshold_percentage=None, dims=(-1, -2)):
         if threshold_percentage is not None:
             # Shrink the FFT embedded dimensions
             embed_dim = fft.shape[-1]
-            fft = fft[:, :, :int(embed_dim * threshold_percentage)]
+            return fft[:, :, :int(embed_dim * threshold_percentage)]
         return fft
     elif method == 'ifft':
         return torch.fft.ifft2(x, dim=dims).real
+    elif method == 'dwt':
+        dwt = DWT1DForward(J=1, mode='zero', wave='db9').to(x.device)
+        Yl, Yh = dwt(x)
+        # Y = torch.cat((Yl, Yh[0]), dim=-1)
+        if threshold_percentage is not None:
+            embed_dim = Yl.shape[-1]
+            return Yl[:, :, :int(embed_dim * threshold_percentage)]
+        return Yl
     else:
         raise NotImplementedError(
             f"Transform method '{method}' is not implemented.")
 
 
+class SpectreLayer(nn.Module):
+    def __init__(self, seq_length, threshold_percentage, dims=(-2, -1)):
+        super().__init__()
+        self.seq_length = seq_length
+        self.threshold_percentage = threshold_percentage
+        self.transform_weights = torch.nn.Parameter(torch.randn(seq_length, 1))
+        self.dims = dims
+
+    def forward(self, x, method='fft'):
+        return transform(x, method=method, threshold_percentage=self.threshold_percentage, dims=self.dims) * self.transform_weights
+
+
 class FNetEncoderLayer(nn.Module):
     def __init__(self,
+                 seq_length,
                  d_model,
                  nhead,
                  dim_feedforward,
@@ -85,7 +107,8 @@ class FNetEncoderLayer(nn.Module):
 
         bias = True
         layer_norm_eps = 1e-5
-        self.transform_weights = torch.nn.Parameter(torch.randn(50, 1))
+        self.transform_norm = nn.LayerNorm(dim_feedforward, eps=layer_norm_eps,
+                                           bias=bias)
 
         factory_kwargs = {"device": 'cuda', "dtype": None}
         if not self.use_spectre:
@@ -113,6 +136,10 @@ class FNetEncoderLayer(nn.Module):
                                   bias=bias, **factory_kwargs)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
+        self.spectre_layer = SpectreLayer(
+            seq_length=seq_length, threshold_percentage=spectre_threshold, dims=(-2, -1))
+        self.final_spectre_layer = SpectreLayer(
+            seq_length=seq_length, threshold_percentage=spectre_threshold, dims=(-2, -1))
 
         # Legacy string support for activation function.
         if isinstance(activation, str):
@@ -126,8 +153,7 @@ class FNetEncoderLayer(nn.Module):
             spectre_threshold = self.spectre_threshold if x.shape[-1] == self.original_d_model else None
             skip_x = x[:, :, :int(
                 x.shape[-1] * spectre_threshold)] if spectre_threshold is not None else x
-            x = self.norm1(skip_x + transform(x, method='fft',
-                                              threshold_percentage=spectre_threshold) * self.transform_weights)
+            x = self.norm1(skip_x + self.spectre_layer(x, method='fft'))
             x = self.norm2(x + self._ff_block(x))
         else:
             if self.norm_first:
@@ -166,7 +192,8 @@ class FNetEncoderLayer(nn.Module):
 
     # feed forward block
     def _ff_block(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.linear2(self.dropout(self.activation(self.linear1(x))))
+        x = self.linear2(self.transform_norm(self.final_spectre_layer(self.dropout(self.activation(
+            self.linear1(x))))))
         return self.dropout2(x)
 
 
@@ -377,6 +404,7 @@ class ViT(nn.Module):
         )
 
         encoder_layer = FNetEncoderLayer(
+            seq_length=num_patches + 1,
             d_model=embed_dim,
             nhead=num_heads,
             dim_feedforward=hidden_dim,
