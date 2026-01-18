@@ -1,0 +1,18 @@
+[package]
+name = "spectral_vit"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+image = "0.25.9"
+ndarray = "0.17.2"
+ort = "2.0.0-rc.11"
+raqote = "0.8.5"
+# show-image = { version = "=0.14.0", features = ["image", "raqote"] }
+show-image = { version = "=0.14.0", features = ["image"] }
+
+[workspace.metadata.cross.target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update && apt-get --assume-yes install libssl-dev:$CROSS_DEB_ARCH pkg-config:$CROSS_DEB_ARCH",
+]
