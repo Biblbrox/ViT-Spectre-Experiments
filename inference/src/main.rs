@@ -44,26 +44,28 @@ fn softmax(logits: &[f32]) -> Vec<f32> {
 }
 
 fn main() -> ort::Result<()> {
+    let args: Vec<String> = env::args().collect();
+    let model_path = &args[1];
     // Load model
-    let mut session = Session::builder()?.commit_from_file(CIFAR100_MODEL_URL)?;
+    let mut session = Session::builder()?.commit_from_file(model_path)?;
     // Load & preprocess image
-    let img = image::open(
-        Path::new(env::current_exe().unwrap().to_str().unwrap())
-            .join("data")
-            .join("example.png"),
-    )
-    .expect("failed to load image")
-    .resize_exact(32, 32, FilterType::CatmullRom)
-    .to_rgb8();
+    //let img = image::open(
+    //    Path::new(env::current_exe().unwrap().to_str().unwrap())
+    //        .join("data")
+    //        .join("example.png"),
+    //)
+    //.expect("failed to load image")
+    //.resize_exact(32, 32, FilterType::CatmullRom)
+    //.to_rgb8();
 
     let mut input: Array4<f32> = Array4::zeros((1, 3, 32, 32));
 
-    for (x, y, pixel) in img.enumerate_pixels() {
-        let [r, g, b] = pixel.0;
-        input[[0, 0, y as usize, x as usize]] = r as f32 / 255.0;
-        input[[0, 1, y as usize, x as usize]] = g as f32 / 255.0;
-        input[[0, 2, y as usize, x as usize]] = b as f32 / 255.0;
-    }
+    //for (x, y, pixel) in img.enumerate_pixels() {
+    //    let [r, g, b] = pixel.0;
+    //    input[[0, 0, y as usize, x as usize]] = r as f32 / 255.0;
+    //    input[[0, 1, y as usize, x as usize]] = g as f32 / 255.0;
+    //    input[[0, 2, y as usize, x as usize]] = b as f32 / 255.0;
+    //}
 
     let mut i = 0;
     let now = Instant::now();

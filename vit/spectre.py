@@ -234,7 +234,7 @@ class SpectreEncoder(nn.Module):
         if self.norm is not None:
             output = self.norm(output)
 
-        return output
+        return output + src
 
 
 class OrthoLearnedHaar1D(nn.Module):

@@ -1,0 +1,3 @@
+GLIBC_2.39 {
+  global: *;  # Export all symbols, but only up to GLIBC_2.39
+};
