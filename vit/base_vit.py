@@ -45,15 +45,6 @@ class PatchEmbedding(nn.Module):
         return x
 
 
-class Transpose(nn.Module):
-    def __init__(self, dims=(-2, -1)):
-        super(Transpose, self).__init__()
-        self.dims = dims
-
-    def forward(self, x):
-        return x.transpose(self.dims[0], self.dims[1])
-
-
 class ViT(nn.Module):
     def __init__(
         self,

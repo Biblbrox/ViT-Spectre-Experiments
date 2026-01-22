@@ -1,8 +1,11 @@
+from debugpy.launcher.debuggee import process
 import torch
 from torch.nn import functional as F
 import torch.nn as nn
 from torch.nn.modules.transformer import _get_clones, _get_activation_fn
 from pytorch_wavelets import DWT1DForward, DWT1DInverse, DWTForward, DWTInverse
+import torch.multiprocessing as mp
+from fast_hadamard_transform import hadamard_transform
 
 
 def transform(x: torch.Tensor, dims, method='fft', pad=False):
@@ -15,13 +18,20 @@ def transform(x: torch.Tensor, dims, method='fft', pad=False):
         pass
 
 
+class Transpose(nn.Module):
+    def __init__(self, dims=(-2, -1)):
+        super(Transpose, self).__init__()
+        self.dims = dims
+
+    def forward(self, x):
+        return x.transpose(self.dims[0], self.dims[1])
+
+
 class SpectreLinear(nn.Module):
-    def __init__(self, in_channels, out_channels, bias=True, scale=2):
+    def __init__(self, in_channels, out_channels, method='hadamar'):
         super().__init__()
-        self.win_size = in_channels // scale
         self.out_channels = out_channels
         self.in_channels = in_channels
-        self.scale = scale
 
         self.head = nn.Sequential(
             nn.Linear(in_channels // 2 + 1, out_channels, bias=False),
@@ -30,16 +40,19 @@ class SpectreLinear(nn.Module):
         )
         self.fft_params = nn.Parameter(torch.ones(in_channels // 2 + 1))
         self.avg_pool = nn.AdaptiveAvgPool1d(out_channels)
+        self.method = method
+            
 
-    def forward(self, x):
+    def forward(self, x, dim=(-1)):
         """
         x: [B,N,E]
         """
 
         residual = x
-        x = torch.fft.rfft(x, dim=(-1))
-        x = x.real * self.fft_params
-        # x = x[..., :self.win_size]
+        x = torch.fft.rfft(x, dim=dim).real
+        x = x * self.fft_params
+        #x = hadamard_transform(x)[..., :self.in_channels // 2 + 1]
+        #x = x * self.fft_params
 
         x = self.head(x) + self.avg_pool(residual)
 
@@ -62,22 +75,35 @@ class SpectreMix(nn.Module):
             ])
         elif method == 'fft_mh_spectrelayers':
             scale = 2
-            self.head_linears = nn.ModuleList([
-                SpectreLinear(in_channels, in_channels // 6, scale=scale) for _ in range(num_heads)
-            ])
             self.common_linear = SpectreLinear(
-                in_channels, in_channels // scale, scale=scale)
-            self.token_heads = nn.ModuleList([
-                nn.Sequential(
-                    SpectreLinear(seq_length, seq_length * 2),
-                    SpectreLinear(seq_length * 2, seq_length)
-
-                ) for _ in range(num_heads)])
+                in_channels, in_channels // scale)
+            shrink = 6
+            fused = True 
+            if fused:
+                self.head_linears_fused = nn.Sequential(
+                        SpectreLinear(in_channels // scale,
+                                      in_channels // shrink * num_heads),
+                        Transpose((-2, -1)),
+                        SpectreLinear(seq_length, seq_length * 2 * num_heads),
+                        SpectreLinear(seq_length * 2 * num_heads, seq_length),
+                        Transpose((-2, -1)),
+                    )
+            else:
+                self.head_linears = nn.ModuleList([
+                    nn.Sequential(
+                        SpectreLinear(in_channels // scale,
+                                      in_channels // shrink),
+                        Transpose((-2, -1)),
+                        SpectreLinear(seq_length, seq_length * 2),
+                        SpectreLinear(seq_length * 2, seq_length),
+                        Transpose((-2, -1)),
+                    ) for _ in range(self.num_heads)
+                ])
             self.proj_head = nn.Sequential(
                 SpectreLinear(
-                    in_channels // 6 * num_heads, in_channels // 6 * num_heads // 2, bias=True, scale=scale),
+                    in_channels // shrink * num_heads, in_channels // shrink * num_heads // 2),
                 SpectreLinear(
-                    in_channels // 6 * num_heads // 2, in_channels, bias=True, scale=scale),
+                    in_channels // shrink * num_heads // 2, in_channels),
             )
         elif method == 'fft_param':
             self.param = [nn.Parameter(torch.ones(seq_length, 1))
@@ -109,15 +135,10 @@ class SpectreMix(nn.Module):
                                            ).real * self.param[i]
             return feat
         elif self.method == 'fft_mh' or self.method == 'fft_mh_spectrelayers':
-            full_embed = []
             head_embed = self.common_linear(x)
-            for i in range(self.num_heads):
-                head_embed = self.head_linears[i](x)
-                head_embed = self.token_heads[i](
-                    head_embed.transpose(1, 2)).transpose(1, 2)
-                full_embed.append(head_embed)
-
-            full_embed = torch.cat(full_embed, dim=-1)
+            # full_embed = [head(head_embed) for head in self.head_linears]
+            full_embed = self.head_linears_fused(head_embed)
+            # full_embed = torch.cat(full_embed, dim=-1)
             projected = self.proj_head(full_embed)
             return projected
         elif self.method == 'dwt_embed':
@@ -129,6 +150,7 @@ class SpectreMix(nn.Module):
                     full_embed = head_embed
                 else:
                     full_embed += head_embed
+
             return full_embed
         elif self.method == 'dwt_token':
             x = x.transpose(2, 1)
@@ -171,12 +193,9 @@ class SpectreEncoderLayer(nn.Module):
         self.mix_layer = SpectreMix(
             d_model, nhead, seq_length, method=method)
         self.dropout = nn.Dropout(dropout)
-        self.linear1 = SpectreLinear(d_model, dim_feedforward,
-                                     bias=bias)
-        self.linear2 = SpectreLinear(
-            dim_feedforward, dim_feedforward, bias=bias)
-        self.linear3 = SpectreLinear(
-            dim_feedforward, d_model, bias)
+        self.linear1 = SpectreLinear(d_model, dim_feedforward)
+        self.linear2 = SpectreLinear(dim_feedforward, dim_feedforward)
+        self.linear3 = SpectreLinear(dim_feedforward, d_model)
 
         self.norm1 = nn.LayerNorm(d_model, eps=layer_norm_eps,
                                   bias=bias, **factory_kwargs)
