@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch.nn.modules.transformer import _get_clones, _get_activation_fn
 from pytorch_wavelets import DWT1DForward, DWT1DInverse, DWTForward, DWTInverse
 import torch.multiprocessing as mp
-from fast_hadamard_transform import hadamard_transform
+# from fast_hadamard_transform import hadamard_transform
 
 
 def transform(x: torch.Tensor, dims, method='fft', pad=False):
@@ -41,7 +41,6 @@ class SpectreLinear(nn.Module):
         self.fft_params = nn.Parameter(torch.ones(in_channels // 2 + 1))
         self.avg_pool = nn.AdaptiveAvgPool1d(out_channels)
         self.method = method
-            
 
     def forward(self, x, dim=(-1)):
         """
@@ -51,8 +50,8 @@ class SpectreLinear(nn.Module):
         residual = x
         x = torch.fft.rfft(x, dim=dim).real
         x = x * self.fft_params
-        #x = hadamard_transform(x)[..., :self.in_channels // 2 + 1]
-        #x = x * self.fft_params
+        # x = hadamard_transform(x)[..., :self.in_channels // 2 + 1]
+        # x = x * self.fft_params
 
         x = self.head(x) + self.avg_pool(residual)
 
@@ -78,16 +77,16 @@ class SpectreMix(nn.Module):
             self.common_linear = SpectreLinear(
                 in_channels, in_channels // scale)
             shrink = 6
-            fused = True 
+            fused = True
             if fused:
                 self.head_linears_fused = nn.Sequential(
-                        SpectreLinear(in_channels // scale,
-                                      in_channels // shrink * num_heads),
-                        Transpose((-2, -1)),
-                        SpectreLinear(seq_length, seq_length * 2 * num_heads),
-                        SpectreLinear(seq_length * 2 * num_heads, seq_length),
-                        Transpose((-2, -1)),
-                    )
+                    SpectreLinear(in_channels // scale,
+                                  in_channels // shrink * num_heads),
+                    Transpose((-2, -1)),
+                    SpectreLinear(seq_length, seq_length * 2 * num_heads),
+                    SpectreLinear(seq_length * 2 * num_heads, seq_length),
+                    Transpose((-2, -1)),
+                )
             else:
                 self.head_linears = nn.ModuleList([
                     nn.Sequential(

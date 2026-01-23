@@ -1,4 +1,4 @@
-from vit.spectre import SpectreLinear, SpectreEncoderLayer, SpectreEncoder
+from spectre_vit.spectre import SpectreLinear, SpectreEncoderLayer, SpectreEncoder
 import torch
 from torch import nn
 
