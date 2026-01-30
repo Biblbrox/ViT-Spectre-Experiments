@@ -1,9 +1,12 @@
-# %% Cell 1
-# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+# %%
+
+import os
 import random
 import timeit
 
 import cv2
+
+# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -16,75 +19,111 @@ import torchvision
 from dinov3.models.vision_transformer import DinoVisionTransformer
 from PIL import Image
 from sklearn.model_selection import train_test_split
+from spectre_vit.base_vit import ViT
 from torch import nn, optim
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 from tqdm import tqdm
 
-from spectre_vit.configs.parser import parse_config
 from spectre_vit.distillation import DinoClassifier, DistillationDatasetCls
-from spectre_vit.models.spectre.spectre import SpectreViT
-from spectre_vit.models.spectre_branch.spectre_branch import SpectreBranch
 
 # %%
-# Read params from config
-config_path = "spectre_vit/configs/spectre_vit.py"
-config = parse_config(config_path)
-random_seed = config.random_seed
-batch_size = config.batch_size
-epochs = config.epochs
-learning_rate = config.learning_rate
-num_classes = config.num_classes
-patch_size = config.patch_size
-img_size = config.img_size
-in_channels = config.in_channels
-num_heads = config.num_heads
-dropout = config.dropout
-hidden_dim = config.hidden_dim
-adam_weight_decay = config.adam_weight_decay
-adam_betas = config.adam_betas
-activation = config.activation
-num_encoders = config.num_encoders
-embed_dim = config.embed_dim
-num_patches = config.num_patches
-use_spectre = config.use_spectre
-spectre_threshold = config.spectre_threshold
-method = config.method
-experiment_name = "spectre_vit_mixing_8h"
-use_distillation = False
 
-random.seed(random_seed)
-np.random.seed(random_seed)
-torch.manual_seed(random_seed)
-torch.cuda.manual_seed(random_seed)
-torch.cuda.manual_seed_all(random_seed)
+
+RANDOM_SEED = 42
+BATCH_SIZE = 16
+EPOCHS = 1000
+LEARNING_RATE = 1e-3
+NUM_CLASSES = 100
+PATCH_SIZE = 4
+IMG_SIZE = 32
+IN_CHANNELS = 3
+# NUM_HEADS = 3
+NUM_HEADS = 8
+DROPOUT = 0.001
+# HIDDEN_DIM = 128
+HIDDEN_DIM = 256
+# HIDDEN_DIM = 768
+# HIDDEN_DIM = 256
+# HIDDEN_DIM = 8
+ADAM_WEIGHT_DECAY = 0.01
+ADAM_BETAS = (0.9, 0.999)
+ACTIVATION = "gelu"
+NUM_ENCODERS = 4
+# EMBED_DIM = (PATCH_SIZE**2) * IN_CHANNELS # 16
+EMBED_DIM = 512
+NUM_PATCHES = (IMG_SIZE // PATCH_SIZE) ** 2  # 49
+USE_SPECTRE = True
+SPECTRE_THRESHOLD = 1.0
+EXPERIMENT_NAME = "spectre_vit_fftmh16_spectrelayers_fusedheads"
+# EXPERIMENT_NAME="spectre_vit_cifar100"
+USE_DISTILLATION = False
+METHOD = "fft_mh_spectrelayers"
+# METHOD='fft_mh'
+
+random.seed(RANDOM_SEED)
+np.random.seed(RANDOM_SEED)
+torch.manual_seed(RANDOM_SEED)
+torch.cuda.manual_seed(RANDOM_SEED)
+torch.cuda.manual_seed_all(RANDOM_SEED)
 # torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = True
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-writer = SummaryWriter(f"runs/{experiment_name}")
+writer = SummaryWriter(f"runs/{EXPERIMENT_NAME}")
 torch.serialization.add_safe_globals([DinoClassifier])
 torch.serialization.add_safe_globals([DinoVisionTransformer])
 
+
 # %%
+
+
 # Test ViT
-model = SpectreViT(
-    img_size=img_size,
-    patch_size=patch_size,
-    in_channels=in_channels,
-    num_classes=num_classes,
-    embed_dim=embed_dim,
-    num_encoders=num_encoders,
-    num_heads=num_heads,
-    hidden_dim=hidden_dim,
-    dropout=dropout,
-    activation=activation,
-    method=method,
+# model = ViT(IMG_SIZE, NUM_CLASSES, PATCH_SIZE, EMBED_DIM, NUM_ENCODERS, NUM_HEADS, HIDDEN_DIM, DROPOUT, ACTIVATION, IN_CHANNELS).to(device)
+def export_model():
+    model = ViT(
+        img_size=IMG_SIZE,
+        patch_size=PATCH_SIZE,
+        in_channels=IN_CHANNELS,
+        num_classes=NUM_CLASSES,
+        embed_dim=EMBED_DIM,
+        num_encoders=NUM_ENCODERS,
+        num_heads=NUM_HEADS,
+        hidden_dim=HIDDEN_DIM,
+        dropout=DROPOUT,
+        activation=ACTIVATION,
+        method=METHOD,
+    ).to(device)
+    torch.save(model, "model.pth")
+    input_tensor = torch.rand((1, 3, 32, 32), dtype=torch.float32).cuda()
+    torch.onnx.export(
+        model,
+        (input_tensor,),
+        "model.onnx",
+        input_names=["input"],
+        output_names=["output"],
+        dynamo=True,
+    )
+
+
+model = ViT(
+    img_size=IMG_SIZE,
+    patch_size=PATCH_SIZE,
+    in_channels=IN_CHANNELS,
+    num_classes=NUM_CLASSES,
+    embed_dim=EMBED_DIM,
+    num_encoders=NUM_ENCODERS,
+    num_heads=NUM_HEADS,
+    hidden_dim=HIDDEN_DIM,
+    dropout=DROPOUT,
+    activation=ACTIVATION,
+    method=METHOD,
 ).to(device)
-if use_distillation:
+export_model()
+if USE_DISTILLATION:
     current_dir = os.path.curdir
     DINO_REPO = f"{current_dir}/dinov3"
     BACKBONE_PATH = (
@@ -103,7 +142,7 @@ if use_distillation:
     for param in dino.parameters():
         param.requires_grad = False
 
-    teacher = DinoClassifier(backbone=dino, num_classes=num_classes).to(device)
+    teacher = DinoClassifier(backbone=dino, num_classes=NUM_CLASSES).to(device)
     teacher.load_state_dict(
         torch.load("./checkpoints/dinov3s16_best.pth", weights_only=True), strict=False
     )
@@ -113,9 +152,11 @@ if use_distillation:
 print(sum(p.numel() for p in model.parameters() if p.requires_grad))
 # writer.add_graph(model, torch.randn(BATCH_SIZE, IN_CHANNELS, IMG_SIZE, IMG_SIZE).to(device))
 
+
 # %%
+
 # Transforms
-if use_distillation:
+if USE_DISTILLATION:
     transform_dino = transforms.Compose([
         transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
         transforms.CenterCrop(224),
@@ -159,7 +200,7 @@ val_dataset = torchvision.datasets.CIFAR100(
 test_dataset = torchvision.datasets.CIFAR100(
     root="./data", train=False, download=True, transform=eval_transform_spectre
 )
-if use_distillation:
+if USE_DISTILLATION:
     train_dataset = torchvision.datasets.CIFAR100(
         root="./data", train=True, download=True, transform=None
     )
@@ -172,19 +213,19 @@ else:
     )
 
 train_dataloader = DataLoader(
-    train_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True
+    train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=8, pin_memory=True
 )
 val_dataloader = DataLoader(
-    val_dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True
+    val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=8, pin_memory=True
 )
 test_dataloader = DataLoader(
-    test_dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True
+    test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=8, pin_memory=True
 )
 
 # Display sample images
 fig, axes = plt.subplots(3, 3, figsize=(6, 6))
 for i, ax in enumerate(axes.flat):
-    if use_distillation:
+    if USE_DISTILLATION:
         data = train_dataset[i]
         img = data["img_model"]
         label = data["label"]
@@ -198,22 +239,36 @@ for i, ax in enumerate(axes.flat):
 plt.tight_layout()
 plt.show()
 
+# Save validation image
+data = val_dataset[190]
+img, label = data
+img = img.permute(1, 2, 0).numpy()
+img = (img - img.min()) / (img.max() - img.min())
+img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+print(img.max())
+print(img.min())
+
+cv2.imwrite("inference/data/example.png", img * 255)
+
+
 # %%
-if not use_distillation:
-    use_amp = True
+
+
+if not USE_DISTILLATION:
+    use_amp = False
 
     criterion = nn.CrossEntropyLoss()
     # optimizer = optim.Adam(model.parameters(), betas=ADAM_BETAS, lr=LEARNING_RATE, weight_decay=ADAM_WEIGHT_DECAY)
     # optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, weight_decay=ADAM_WEIGHT_DECAY, nesterov=True, momentum=0.9)
     optimizer = optim.AdamW(
-        model.parameters(), betas=adam_betas, lr=learning_rate, weight_decay=adam_weight_decay
+        model.parameters(), betas=ADAM_BETAS, lr=LEARNING_RATE, weight_decay=ADAM_WEIGHT_DECAY
     )
-    num_steps = len(train_dataloader) * epochs
+    num_steps = len(train_dataloader) * EPOCHS
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps)
     warmup_scheduler = warmup.UntunedExponentialWarmup(optimizer)
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     start = timeit.default_timer()
-    for epoch in range(epochs):
+    for epoch in range(EPOCHS):
         model.train()
         train_labels = []
         train_preds = []
@@ -236,7 +291,7 @@ if not use_distillation:
                 spectre_loss = 0
                 for module in model.modules():
                     if hasattr(module, "spectre_loss"):
-                        spectre_loss += module.spectre_loss * 0.5
+                        spectre_loss += module.spectre_loss * 0.1
                 loss += spectre_loss
 
             optimizer.zero_grad(set_to_none=True)
@@ -249,9 +304,6 @@ if not use_distillation:
 
             train_running_loss += loss.item()
             spectre_running_loss += spectre_loss
-            # writer.add_scalar(
-            #    "Loss/Spectre", spectre_loss.item(), epoch * len(train_dataloader) + idx
-            # )
 
         train_loss = train_running_loss / (idx + 1)
         spectre_loss = spectre_running_loss / (idx + 1)
@@ -293,8 +345,11 @@ if not use_distillation:
     writer.close()
     print(f"Training time: {stop - start:.2f}")
 
+
 # %%
-if use_distillation:
+
+
+if USE_DISTILLATION:
     use_amp = False
     T = 2
     soft_target_loss_weight = 0.25
@@ -305,11 +360,11 @@ if use_distillation:
     criterion_dist = nn.CosineSimilarity()
     # optimizer = optim.Adam(model.parameters(), betas=ADAM_BETAS, lr=LEARNING_RATE, weight_decay=ADAM_WEIGHT_DECAY)
     optimizer = optim.AdamW(
-        model.parameters(), betas=adam_betas, lr=learning_rate, weight_decay=adam_weight_decay
+        model.parameters(), betas=ADAM_BETAS, lr=LEARNING_RATE, weight_decay=ADAM_WEIGHT_DECAY
     )
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     start = timeit.default_timer()
-    for epoch in range(epochs):
+    for epoch in range(EPOCHS):
         model.train()
         teacher.eval()
         train_labels = []

@@ -14,6 +14,10 @@ vit/__pycache__
 .venv
 inference/target
 
+# Project files
+.zed
+.ropeproject/
+
 
 # Weight files
 *.onnx
