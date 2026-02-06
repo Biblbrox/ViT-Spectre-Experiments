@@ -1,9 +1,11 @@
 # Spectre ViT experiment project
 
 ## Content
-
-- vit - python pytorch experiments folder
-- inference - rust implementation of real-time inference.
+Important folders:
+- spectre_vit -- python pytorch experiments folder;
+- spectre_vit/repl -- repl scrips for training, testing, and other experiments;
+- spectre_vit/configs -- a directory where all config files are stored. If you want to conduct a new experiment, create a separate config file in that directory.
+- spectre_vit/models -- model class files
 
 ### Experiments setup
 In order to build the project you should the following:
@@ -16,7 +18,12 @@ wget -qO- https://astral.sh/uv/install.sh | sh
 uv sync
 ```
 
-Now you should be able to choose spectre_vit environment in every jupyter notebook.
+If you want to use distillation in your studies, make sure that dinov3 submodule is cloned:
+```
+git submodule update --init --recursive && uv sync
+```
+
+Now you should be able to choose spectre_vit environment in every jupyter provided notebook.
 
 ### Notebooks
 - vit_spectre_cifar100.ipynb - Cifar100 training pipeline;
