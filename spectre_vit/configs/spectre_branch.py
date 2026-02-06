@@ -1,9 +1,8 @@
-_base_ = ["./default.py"]
+_base_ = "default.py"
 
 # batch_size = 16
 batch_size = 512
 epochs = 5000
-learning_rate = 1e-3
 num_classes = 100
 patch_size = 4
 img_size = 32
@@ -15,11 +14,9 @@ adam_weight_decay = 0.01
 adam_betas = (0.9, 0.999)
 activation = "gelu"
 num_encoders = 4
-random_seed = 42
 # embed_dim = (patch_size**2) * in_channels # 16
 # embed_dim = 512
 embed_dim = 768
 num_patches = (img_size // patch_size) ** 2  # 49
 use_spectre = True
 spectre_threshold = 1.0
-method = "fft_mh_spectrelayers"
