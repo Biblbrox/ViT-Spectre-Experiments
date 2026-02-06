@@ -1,4 +1,4 @@
-_base_ = ["./default.py"]
+_base_ = "default.py"
 
 # batch_size = 16
 batch_size = 512

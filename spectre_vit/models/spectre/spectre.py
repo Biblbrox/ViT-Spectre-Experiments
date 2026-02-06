@@ -1,23 +1,8 @@
-import math
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from pytorch_wavelets import DWT1DForward
 from torch.nn.modules.transformer import _get_activation_fn, _get_clones
 
 from spectre_vit.models.spectre.layers import MHPermutMix, SpectreLinear
-from spectre_vit.modules.patch_embeddings import PatchEmbedding
-
-
-def transform(x: torch.Tensor, dims, method="fft", pad=False):
-    if method == "fft":
-        if pad:
-            # F.pad(x,)
-            pass
-        return torch.fft.fft(x, dims=dims)
-    elif method == "hadamar":
-        pass
 
 
 class Transpose(nn.Module):
@@ -27,14 +12,6 @@ class Transpose(nn.Module):
 
     def forward(self, x):
         return x.transpose(self.dims[0], self.dims[1])
-
-
-def shifted_sigmoid(x, threshold):
-    return 1 / (1 + torch.exp(x + threshold))
-
-
-def shifted_sigmoid2(x, threshold):
-    return 1 / (1 + torch.exp(1 / math.sqrt(threshold**2 / 5000) * (x + threshold)))
 
 
 class NormalMask(nn.Module):
@@ -47,82 +24,6 @@ class NormalMask(nn.Module):
     def forward(self, X):
         gauss = torch.exp(-0.5 * ((self.freqs.to(X.device) - self.mean) / (self.std + 1e-8)) ** 2)
         return X * gauss
-
-
-class SpectreMix(nn.Module):
-    def __init__(self, in_channels, num_heads, seq_length, method="fft"):
-        super().__init__()
-
-        self.num_heads = num_heads
-        self.in_channels = in_channels
-        self.method = method
-
-        if method == "fft_bare":
-            pass
-        elif method == "fft_mh":
-            self.head_linears = nn.ModuleList([
-                nn.Linear(in_channels, in_channels) for _ in range(num_heads)
-            ])
-        elif method == "fft_mh_spectrelayers":
-            scale = 1
-            # self.common_linear = SpectreLinear(in_channels, in_channels // scale)
-            self.head_linears_fused = MHPermutMix(
-                in_channels // scale, seq_length, num_heads, in_channels
-            )
-        elif method == "fft_param":
-            self.param = [nn.Parameter(torch.ones(seq_length, 1)) for _ in range(num_heads)]
-        elif method == "dwt_embed":
-            self.dwt = DWT1DForward(num_heads, wave="haar", mode="zero")
-            self.head_linear = nn.ModuleList([
-                nn.Linear(in_channels // 2 ** (i + 1), in_channels) for i in range(num_heads)
-            ])
-        elif method == "dwt_token":
-            self.dwt = DWT1DForward(num_heads, wave="haar", mode="zero")
-            self.head_linear = nn.ModuleList([
-                nn.Linear(seq_length // 2 ** (i + 1) + 1, seq_length) for i in range(num_heads)
-            ])
-
-    def forward(self, x):
-        """
-        x: [B, N, E]
-        """
-        if self.method == "fft_bare":
-            return torch.fft.fft2(x, dim=(-2, -1)).real
-        elif self.method == "fft_param":
-            feat = None
-            for i in range(self.num_heads):
-                if feat is None:
-                    feat = torch.fft.fft2(x, dim=(-2, -1)).real * self.param[i]
-                else:
-                    feat += torch.fft.fft2(x, dim=(-2, -1)).real * self.param[i]
-            return feat
-        elif self.method == "fft_mh" or self.method == "fft_mh_spectrelayers":
-            # x = self.common_linear(x)
-            x = self.head_linears_fused(x)
-            return x
-        elif self.method == "dwt_embed":
-            approx, detail = self.dwt(x)
-            full_embed = None
-            for i in range(self.num_heads):
-                head_embed = self.head_linear[i](detail[i])
-                if full_embed is None:
-                    full_embed = head_embed
-                else:
-                    full_embed += head_embed
-
-            return full_embed
-        elif self.method == "dwt_token":
-            x = x.transpose(2, 1)
-            approx, detail = self.dwt(x)
-            full_embed = None
-            for i in range(self.num_heads):
-                head_embed = self.head_linear[i](detail[i])
-                head_embed = head_embed.transpose(2, 1)
-                if full_embed is None:
-                    full_embed = head_embed
-                else:
-                    full_embed += head_embed
-            return full_embed
 
 
 class SpectreEncoderLayer(nn.Module):
@@ -142,21 +43,11 @@ class SpectreEncoderLayer(nn.Module):
         dim_feedforward,
         dropout,
         activation,
-        method="fft_mh_spectrelayers",
     ):
         super().__init__()
-        assert method in [
-            "fft_bare",
-            "fft_mh",
-            "fft_param",
-            "dwt_embed",
-            "dwt_token",
-            "fft_mh_spectrelayers",
-        ]
-        self.method = method
         bias = True
         layer_norm_eps = 1e-5
-        self.mix_layer = SpectreMix(d_model, nhead, seq_length, method=method)
+        self.mix_layer = MHPermutMix(d_model, seq_length, nhead, d_model)
         self.linear1 = SpectreLinear(d_model, dim_feedforward)
         self.linear3 = SpectreLinear(dim_feedforward, d_model)
 
@@ -278,15 +169,10 @@ class SpectreViT(nn.Module):
         hidden_dim=3072,
         dropout=0.1,
         activation="gelu",
-        method="attention",
     ):
         super().__init__()
 
         num_patches = (img_size // patch_size) ** 2
-
-        # self.embeddings_block = PatchEmbedding(
-        #     embed_dim, patch_size, num_patches, dropout, in_channels
-        # )
 
         self.embeddings_block = SpectralPatchEmbed(
             embed_dim, patch_size, num_patches, dropout, in_channels
@@ -299,13 +185,11 @@ class SpectreViT(nn.Module):
             dim_feedforward=hidden_dim,
             dropout=dropout,
             activation=activation,
-            method=method,
         )
 
         self.encoder_blocks = SpectreEncoder(encoder_layer, num_layers=num_encoders)
 
         self.mlp_head = nn.Sequential(SpectreLinear(embed_dim, num_classes))
-        # self.cls_norm = nn.LayerNorm(100)
 
     def forward(self, x, return_features=False):
         x = self.embeddings_block(x)
