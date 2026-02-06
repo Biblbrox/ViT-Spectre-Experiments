@@ -1,4 +1,7 @@
 # %% Cell 1
+import sys
+
+sys.path.append("../..")
 import onnx
 import torch
 from onnxsim import simplify
@@ -79,5 +82,5 @@ def export_model(model_name, weights_path=None):
 
 
 model_name = f"spectre_vit_mixing_{num_heads}h_hid{hidden_dim}_emb{embed_dim}_patch{patch_size}_enc{num_encoders}"
-model_weights = f"runs/{model_name}/model_best.pt"
+model_weights = f"../../runs/{model_name}/model_best.pt"
 export_model(model_name, model_weights)

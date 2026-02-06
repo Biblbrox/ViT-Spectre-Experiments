@@ -1,7 +1,10 @@
 # %% Cell 1
 # os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import random
+import sys
 import timeit
+
+sys.path.append("../..")
 
 import matplotlib.pyplot as plt
 import numpy as np

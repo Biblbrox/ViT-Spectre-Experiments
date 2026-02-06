@@ -1,8 +1,10 @@
 # %% Performance checks
-import math
+import sys
 import time
 import timeit
 from itertools import product
+
+sys.path.append("../..")
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -11,7 +13,6 @@ import torch
 import torch.nn as nn
 import torch.profiler as profiler
 
-from fft_experiments import patches
 from spectre_vit.configs.parser import parse_config
 from spectre_vit.models.spectre.spectre import SpectreEncoderLayer, SpectreViT
 from spectre_vit.profile.parser import ProfilerParser
