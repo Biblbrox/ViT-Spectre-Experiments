@@ -9,6 +9,7 @@ uv.lock
 data/
 vit/__pycache__
 .vscode
+plots/*
 
 # Virtual environments
 .venv

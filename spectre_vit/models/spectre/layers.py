@@ -50,25 +50,27 @@ class BinaryLinear(nn.Module):
 #         return x
 
 
-class SignPermuteMix(nn.Module):
-    def __init__(self, size: int, dim: int):
+class MHPermutMix(nn.Module):
+    def __init__(self, embed_dim: int, token_dim: int, num_heads: int, out_channels: int):
         super().__init__()
-        self.size = size
-        self.dim = dim
+        d = embed_dim * token_dim
+        self.num_heads = num_heads
+        self.token_dim = token_dim
+        self.embed_dim = embed_dim
+        self.concat_dim = self.embed_dim * self.num_heads
+        signs = torch.randint(0, 2, (num_heads, d), dtype=torch.float32)
+        signs = signs * 2 - 1
+        self.register_buffer("signs", signs.unsqueeze(0))
+        perms = torch.stack([torch.randperm(d) for _ in range(num_heads)])
+        self.register_buffer("perms", perms)
+        self.linear = SpectreLinear(embed_dim * num_heads, out_channels)
 
-        perm = torch.randperm(size)
-        self.register_buffer("perm", perm)
-
-        signs = torch.randint(0, 2, (size,)).float() * 2 - 1
-        signs = signs.view((1, size, 1))
-        self.register_buffer("signs", signs)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        with torch.no_grad():
-            x = x * self.signs
-            x = torch.index_select(x, dim=self.dim, index=self.perm)
-
-        return x
+    def forward(self, x):
+        B = x.shape[0]
+        x = x.view(B, -1)
+        x = x[:, self.perms] * self.signs
+        x = x.view(B, self.token_dim, self.concat_dim)
+        return self.linear(x)
 
 
 class SpectreLinear(nn.Module):
@@ -76,15 +78,9 @@ class SpectreLinear(nn.Module):
         super().__init__()
         self.out_channels = out_channels
         self.in_channels = in_channels
-        # self.spectre_channels = in_channels // 2 + 1
-        self.spectre_channels = in_channels
-        self.sparsity = 4
-        self.global_head = nn.Sequential(
-            nn.Linear(self.spectre_channels, 16),
-            nn.LayerNorm(16),
-            nn.GELU(),
-            nn.Linear(16, 1),
-        )
+        self.sparsity = 1
+        local_idx = torch.arange(0, in_channels, self.sparsity)
+        self.register_buffer("local_idx", local_idx)  # [local_channels]
         local_channels = int(math.ceil(in_channels / self.sparsity))
         self.local_head = nn.Sequential(
             nn.Linear(local_channels, out_channels),
@@ -100,11 +96,9 @@ class SpectreLinear(nn.Module):
         """
         x: [B,N,E]
         """
-        local_feat = x[..., :: self.sparsity]
-        local_feat = self.local_head(local_feat)
-        global_feat = self.global_head(x)
-        feat = global_feat + self.avg_pool(x) + local_feat
-        return feat
+        # local_feat = torch.index_select(x, dim=-1, index=self.local_idx)  # [B,N,E/s]
+        local_feat = self.local_head(x)
+        return local_feat + self.avg_pool(x)
 
 
 class FFTApproximator(nn.Module):

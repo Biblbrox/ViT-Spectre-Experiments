@@ -10,62 +10,45 @@ import onnx
 import onnxruntime as ort
 import torch
 import torch.nn as nn
-from fast_hadamard_transform import hadamard_transform
-from torch.utils.tensorboard import SummaryWriter
-
-from spectre_vit.models.spectre.hadamar import fwht_fast
 
 # %%
 
 
 class FFTApproximator(nn.Module):
-    def __init__(self, size: int, dim: int):
+    def __init__(self, in_channels):
         super().__init__()
-        self.size = size
-        self.dim = dim
 
-        perm = torch.randperm(size)
-        self.register_buffer("perm", perm)
-
-        signs = torch.randint(0, 2, (size,)).float() * 2 - 1
-        signs = signs.view((1, size, 1))
-        self.register_buffer("signs", signs)
+        self.linear = nn.Linear(in_channels, in_channels // 2 + 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        with torch.no_grad():
-            x = x * self.signs
-            # x = torch.index_select(x, dim=self.dim, index=self.perm)
-
-        return x
+        return self.linear(x)
 
 
 # %%
 # Training
-# batch_size = 160
-# epochs = 100000
-# learning_rate = 1e-3
-# embed_dim = 64
-# num_patches = 16
+batch_size = 160
+epochs = 100000
+learning_rate = 1e-3
+embed_dim = 64
+num_patches = 16
 #
-# criterion = nn.MSELoss()
-# model = nn.Sequential(FFTApproximator(num_patches, 1), FFTApproximator(embed_dim, 2)).cuda()
-# optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-# writer = SummaryWriter("runs/fft_approximator_experiment_1")
-# for epoch in range(epochs):
-#     model.train()
-#
-#     inputs = torch.randn(batch_size, num_patches, embed_dim).cuda()
-#     targets = torch.fft.fft(inputs, dim=-1).real
-#     # targets = fwht_fast(inputs)
-#
-#     outputs = model(inputs)
-#     loss = criterion(outputs, targets)
-#     optimizer.zero_grad()
-#     loss.backward()
-#     optimizer.step()
-#
-#     # writer.add_scalar("Loss/train", loss.item(), epoch)
-#     print(f"Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.4f}")
+criterion = nn.MSELoss()
+model = FFTApproximator(embed_dim).cuda()
+optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+for epoch in range(epochs):
+    model.train()
+    #
+    inputs = torch.randn(batch_size, num_patches, embed_dim).cuda()
+    targets = torch.fft.rfft2(inputs, dim=(-1)).real
+
+    outputs = model(inputs)
+    loss = criterion(outputs, targets)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    #
+    # writer.add_scalar("Loss/train", loss.item(), epoch)
+    print(f"Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.4f}")
 # %% Check performance in comparation with torch.fft.rfft
 
 batch_size = 16

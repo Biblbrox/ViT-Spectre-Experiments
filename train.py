@@ -3,24 +3,16 @@
 import random
 import timeit
 
-import cv2
 import matplotlib.pyplot as plt
 import numpy as np
-
-# import polars as pd
-import pandas as pd
 import pytorch_warmup as warmup
 import torch
-import torch.nn.functional as F
 import torchvision
 from dinov3.models.vision_transformer import DinoVisionTransformer
-from PIL import Image
-from sklearn.model_selection import train_test_split
 from torch import nn, optim
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
-from tqdm import tqdm
 
 from spectre_vit.configs.parser import parse_config
 from spectre_vit.distillation import DinoClassifier, DistillationDatasetCls
@@ -29,10 +21,11 @@ from spectre_vit.models.spectre_branch.spectre_branch import SpectreBranch
 
 # %%
 # Read params from config
-config_path = "spectre_vit/configs/spectre_vit.py"
+config_path = "spectre_vit/configs/spectre_vit_cifar100.py"
 config = parse_config(config_path)
 random_seed = config.random_seed
 batch_size = config.batch_size
+val_batch_size = config.val_batch_size
 epochs = config.epochs
 learning_rate = config.learning_rate
 num_classes = config.num_classes
@@ -51,7 +44,7 @@ num_patches = config.num_patches
 use_spectre = config.use_spectre
 spectre_threshold = config.spectre_threshold
 method = config.method
-experiment_name = "spectre_vit_mixing_8h"
+experiment_name = f"spectre_vit_mixing_{num_heads}h_hid{hidden_dim}_emb{embed_dim}_patch{patch_size}_enc{num_encoders}_without_global"
 use_distillation = False
 
 random.seed(random_seed)
@@ -172,13 +165,31 @@ else:
     )
 
 train_dataloader = DataLoader(
-    train_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True
+    train_dataset,
+    batch_size=batch_size,
+    shuffle=True,
+    num_workers=16,
+    pin_memory=True,
+    persistent_workers=True,
+    prefetch_factor=4,
 )
 val_dataloader = DataLoader(
-    val_dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True
+    val_dataset,
+    batch_size=val_batch_size,
+    shuffle=False,
+    num_workers=16,
+    pin_memory=True,
+    persistent_workers=True,
+    prefetch_factor=4,
 )
 test_dataloader = DataLoader(
-    test_dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True
+    test_dataset,
+    batch_size=val_batch_size,
+    shuffle=False,
+    num_workers=16,
+    pin_memory=True,
+    persistent_workers=True,
+    prefetch_factor=4,
 )
 
 # Display sample images
@@ -210,15 +221,17 @@ if not use_distillation:
     )
     num_steps = len(train_dataloader) * epochs
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps)
-    warmup_scheduler = warmup.UntunedExponentialWarmup(optimizer)
+    # warmup_scheduler = warmup.UntunedExponentialWarmup(optimizer)
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     start = timeit.default_timer()
+    best_acc = 0.0
     for epoch in range(epochs):
         model.train()
-        train_labels = []
-        train_preds = []
         train_running_loss = 0
         spectre_running_loss = 0
+
+        correct = 0
+        total = 0
 
         for idx, img_label in enumerate(train_dataloader):
             img = img_label[0].float().to(device)
@@ -227,34 +240,36 @@ if not use_distillation:
                 y_pred = model(img)
                 y_pred_label = torch.argmax(y_pred, dim=1)
 
-                train_labels.extend(label.cpu().detach())
-                train_preds.extend(y_pred_label.cpu().detach())
+            correct += (label == y_pred_label).sum()
+            total += label.size(0)
 
-                loss = criterion(y_pred, label)
+            loss = criterion(y_pred, label)
 
-                # Find spectre loss in all spectre layers
-                spectre_loss = 0
-                for module in model.modules():
-                    if hasattr(module, "spectre_loss"):
-                        spectre_loss += module.spectre_loss * 0.5
-                loss += spectre_loss
+            # Find spectre loss in all spectre layers
+            # spectre_loss = 0
+            # for module in model.modules():
+            #     if hasattr(module, "spectre_loss"):
+            #         spectre_loss += module.spectre_loss * 0.5
+            # loss += spectre_loss
 
             optimizer.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
 
-            with warmup_scheduler.dampening():
-                lr_scheduler.step()
+            # with warmup_scheduler.dampening():
+            #    lr_scheduler.step()
 
             train_running_loss += loss.item()
-            spectre_running_loss += spectre_loss
+            # spectre_running_loss += spectre_loss
             # writer.add_scalar(
             #    "Loss/Spectre", spectre_loss.item(), epoch * len(train_dataloader) + idx
             # )
 
         train_loss = train_running_loss / (idx + 1)
-        spectre_loss = spectre_running_loss / (idx + 1)
+        train_acc = (correct.float() / total).item()
+
+        # spectre_loss = spectre_running_loss / (idx + 1)
 
         model.eval()
         val_labels = []
@@ -265,28 +280,34 @@ if not use_distillation:
                 img = img_label[0].float().to(device)
                 label = img_label[1].type(torch.uint8).to(device)
 
-                y_pred = model(img)
-                y_pred_label = torch.argmax(y_pred, dim=1)
+                with torch.autocast(device_type=device, dtype=torch.float16, enabled=use_amp):
+                    y_pred = model(img)
+                    y_pred_label = torch.argmax(y_pred, dim=1)
 
-                val_labels.extend(label.cpu().detach())
-                val_preds.extend(y_pred_label.cpu().detach())
+                    val_labels.extend(label.cpu().detach())
+                    val_preds.extend(y_pred_label.cpu().detach())
 
-                loss = criterion(y_pred, label)
-                val_running_loss += loss.item()
+                    loss = criterion(y_pred, label)
+                    val_running_loss += loss.item()
 
             val_loss = val_running_loss / (idx + 1)
             writer.add_scalar("Loss/Train", train_loss, epoch + 1)
             writer.add_scalar("Loss/Validation", val_loss, epoch + 1)
             writer.add_scalar(
                 "Accuracy/Train",
-                sum(1 for x, y in zip(train_preds, train_labels) if x == y) / len(train_labels),
+                train_acc,
                 epoch + 1,
             )
+            val_acc = sum(1 for x, y in zip(val_preds, val_labels) if x == y) / len(val_labels)
             writer.add_scalar(
                 "Accuracy/Validation",
-                sum(1 for x, y in zip(val_preds, val_labels) if x == y) / len(val_labels),
+                val_acc,
                 epoch + 1,
             )
+
+            if val_acc > best_acc:
+                best_acc = val_acc
+                torch.save(model.state_dict(), f"runs/{experiment_name}/model_best.pt")
 
     stop = timeit.default_timer()
     writer.add_scalar("Training time", stop - start)
@@ -386,11 +407,6 @@ if use_distillation:
             writer.add_scalar(
                 "Accuracy/Train",
                 sum(1 for x, y in zip(train_preds, train_labels) if x == y) / len(train_labels),
-                epoch + 1,
-            )
-            writer.add_scalar(
-                "Accuracy/Validation",
-                sum(1 for x, y in zip(val_preds, val_labels) if x == y) / len(val_labels),
                 epoch + 1,
             )
 

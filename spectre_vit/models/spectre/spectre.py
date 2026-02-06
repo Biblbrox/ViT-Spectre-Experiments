@@ -1,21 +1,13 @@
 import math
 
 import torch
-import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.nn.functional as F
-from debugpy.launcher.debuggee import process
-from mpmath.tests.test_hp import b
-from polars import Binary
-from pytorch_wavelets import DWT1DForward, DWT1DInverse, DWTForward, DWTInverse
-from torch.nn import functional as F
+from pytorch_wavelets import DWT1DForward
 from torch.nn.modules.transformer import _get_activation_fn, _get_clones
-from torch.profiler import ProfilerActivity, profile, record_function
 
-from spectre_vit.models.spectre.layers import SignPermuteMix, SpectreLinear
+from spectre_vit.models.spectre.layers import MHPermutMix, SpectreLinear
 from spectre_vit.modules.patch_embeddings import PatchEmbedding
-
-# from fast_hadamard_transform import hadamard_transform
 
 
 def transform(x: torch.Tensor, dims, method="fft", pad=False):
@@ -72,31 +64,10 @@ class SpectreMix(nn.Module):
                 nn.Linear(in_channels, in_channels) for _ in range(num_heads)
             ])
         elif method == "fft_mh_spectrelayers":
-            scale = 2
-            self.common_linear = SpectreLinear(in_channels, in_channels // scale)
-            shrink = 6
-            self.fused = False
-            if self.fused:
-                self.head_linears_fused = nn.Sequential(
-                    SignPermuteMix(seq_length * self.num_heads, -2),
-                    SpectreLinear(
-                        in_channels // scale,
-                        in_channels // shrink * self.num_heads,
-                    ),
-                )
-            else:
-                self.head_linears = nn.ModuleList([
-                    nn.Sequential(
-                        SignPermuteMix(seq_length, -2),
-                        SpectreLinear(in_channels // scale, in_channels // shrink),
-                    )
-                    for _ in range(self.num_heads)
-                ])
-            self.proj_head = nn.Sequential(
-                SpectreLinear(
-                    in_channels // shrink * num_heads, in_channels // shrink * num_heads // 2
-                ),
-                SpectreLinear(in_channels // shrink * num_heads // 2, in_channels),
+            scale = 1
+            # self.common_linear = SpectreLinear(in_channels, in_channels // scale)
+            self.head_linears_fused = MHPermutMix(
+                in_channels // scale, seq_length, num_heads, in_channels
             )
         elif method == "fft_param":
             self.param = [nn.Parameter(torch.ones(seq_length, 1)) for _ in range(num_heads)]
@@ -126,17 +97,9 @@ class SpectreMix(nn.Module):
                     feat += torch.fft.fft2(x, dim=(-2, -1)).real * self.param[i]
             return feat
         elif self.method == "fft_mh" or self.method == "fft_mh_spectrelayers":
-            head_embed = self.common_linear(x)
-            if self.fused:
-                head_embed = torch.cat(
-                    [head(head_embed) for head in self.permutation_heads], dim=-1
-                )
-                full_embed = self.head_linears_fused(head_embed)
-            else:
-                full_embed = [head(head_embed) for head in self.head_linears]
-                full_embed = torch.cat(full_embed, dim=-1)
-            projected = self.proj_head(full_embed)
-            return projected
+            # x = self.common_linear(x)
+            x = self.head_linears_fused(x)
+            return x
         elif self.method == "dwt_embed":
             approx, detail = self.dwt(x)
             full_embed = None
@@ -194,9 +157,7 @@ class SpectreEncoderLayer(nn.Module):
         bias = True
         layer_norm_eps = 1e-5
         self.mix_layer = SpectreMix(d_model, nhead, seq_length, method=method)
-        self.dropout = nn.Dropout(dropout)
         self.linear1 = SpectreLinear(d_model, dim_feedforward)
-        self.linear2 = SpectreLinear(dim_feedforward, dim_feedforward)
         self.linear3 = SpectreLinear(dim_feedforward, d_model)
 
         self.norm1 = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias)
@@ -210,20 +171,15 @@ class SpectreEncoderLayer(nn.Module):
 
         self.activation = activation
 
-    def forward(self, src):
-        x = src
-        old_x = x
-        x = self.mix_layer(x)
-        x = self.norm1(x) + old_x
+    def forward(self, x):
+        x = self.norm1(self.mix_layer(x)) + x
         x = self.norm2(x + self._ff_block(x))
         return x
 
     def _ff_block(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.dropout(self.linear1(x))
-        x = self.linear2(x)
-        # x = self.transform_norm(x)
-        x = self.linear3(x)
-        return self.dropout2(x)
+        x = self.dropout1(self.linear1(x))
+        x = self.dropout2(self.linear3(x))
+        return x
 
 
 class SpectreEncoder(nn.Module):
@@ -256,64 +212,6 @@ class SpectreEncoder(nn.Module):
         return output + src
 
 
-class SpectralMask(nn.Module):
-    def __init__(self, n_freq):
-        super().__init__()
-        self.mask_logits = nn.Parameter(torch.zeros(n_freq))
-
-    def forward(self, x):
-        # x: [B,N,E]
-        X = torch.fft.fft(x, dim=-1).real
-
-        m = torch.sigmoid(self.mask_logits)  # [F]
-        X = X * m[None, None, :]  # broadcast
-
-        return X
-
-
-# class SpectralPatchEmbed(nn.Module):
-#     def __init__(self, embed_dim, patch_size, num_patches, dropout, in_channels, keep_ratio=0.5):
-#         super().__init__()
-#         self.P = patch_size
-#
-#         fh = int(patch_size * keep_ratio)
-#         fw = int((patch_size // 2 + 1) * keep_ratio)
-#
-#         self.fh, self.fw = fh, fw
-#
-#         self.proj = nn.Linear(in_channels * fh * fw, embed_dim)
-#         self.cls_token = nn.Parameter(torch.randn(1, 1, embed_dim))
-#         self.position_embeddings = nn.Parameter(torch.randn(1, num_patches + 1, embed_dim))
-#         self.dropout = nn.Dropout(dropout)
-#
-#     def forward(self, x):
-#         # x: [B, C, H, W]
-#         B, C, H, W = x.shape
-#
-#         # Split patches
-#         x = x.unfold(2, self.P, self.P).unfold(3, self.P, self.P)
-#         x = x.contiguous().view(B, C, -1, self.P, self.P)
-#
-#         # FFT per patch
-#         x_fft = torch.fft.rfft2(x, norm="ortho").real
-#
-#         # Keep low freqs
-#         x_fft = x_fft[:, :, :, : self.fh, : self.fw]
-#
-#         # x_fft = x_fft.flatten(1, -1)
-#         # Flatten channels + freq dimensions per patch
-#         x_fft = x_fft.permute(0, 2, 1, 3, 4)  # [B, N, C, fh, fw]
-#         x_fft = x_fft.flatten(2)  # [B, N, C*fh*fw]
-#
-#         x_proj = self.proj(x_fft)
-#         cls_token = self.cls_token.expand(B, -1, -1)
-#         x_out = torch.cat((cls_token, x_proj), dim=1)  # [B, N+1, E]
-#         x_out = x_out + self.position_embeddings
-#         x_out = self.dropout(x_out)
-#
-#         return x_out
-
-
 class SpectralPatchEmbed(nn.Module):
     def __init__(self, embed_dim, patch_size, num_patches, dropout, in_channels):
         super().__init__()
@@ -334,7 +232,7 @@ class SpectralPatchEmbed(nn.Module):
 
     def forward(self, x):
         # x: [B, C, H, W]
-        B, C, H, W = x.shape
+        B, C, _, _ = x.shape
         P = self.P
 
         # Split into patches
