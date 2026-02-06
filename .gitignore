@@ -6,8 +6,28 @@ dist/
 wheels/
 *.egg-info
 uv.lock
-data
+data/
 vit/__pycache__
+.vscode
+plots/*
 
 # Virtual environments
 .venv
+inference/target
+
+# Project files
+.zed
+.ropeproject/
+
+
+# Weight files
+*.onnx
+*.pth
+*.pt
+checkpoints/*
+runs/*
+*.data
+octave-workspace
+token_example.png
+image_example.png
+example.png
