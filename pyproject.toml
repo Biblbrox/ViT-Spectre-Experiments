@@ -1,16 +1,14 @@
 [project]
 name = "spectralvit"
 version = "0.1.0"
-description = "Add your description here"
+description = "Spectral vit experients repo. Our goal is to establish a method for creating lightweight visual models for embedded devices"
 readme = "README.md"
 requires-python = ">=3.13"
 
 dependencies = [
     "altair>=6.0.0",
     "bs4>=0.0.2",
-    "graphviz>=0.21",
     "haar-pytorch>=2021.11.16.0",
-    "ignite>=1.1.0",
     "ipykernel>=7.1.0",
     "jupyter>=1.1.1",
     "matplotlib>=3.10.8",
@@ -32,14 +30,16 @@ dependencies = [
     "tensorboard>=2.20.0",
     "termcolor>=3.3.0",
     "torch>=2.9.1",
-    "torchaudio>=2.9.1",
-    "torchmetrics>=1.0.3",
     "torchview>=0.2.7",
     "torchvision>=0.24.1",
     "tqdm>=4.66.5",
     "wheel>=0.45.1",
+    "dinov3"
 ]
 
 [[tool.uv.index]]
 url = "https://download.pytorch.org/whl/cu128"
 default = false
+
+[tool.uv.sources]
+dinov3 = { path = "./dinov3" }
