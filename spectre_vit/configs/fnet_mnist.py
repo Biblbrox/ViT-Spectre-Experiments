@@ -1,4 +1,4 @@
-_base_ = ["./default.py"]
+__base__ = "default.py"
 
 batch_size = 8
 val_batch_size = 512
