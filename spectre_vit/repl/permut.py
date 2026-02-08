@@ -1,9 +1,12 @@
 # %%
 import math
 import random
+import sys
 import time
 import timeit
 from os import path
+
+sys.path.append("../..")
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -25,45 +28,57 @@ class FNetAttention(nn.Module):
         super().__init__()
 
     def forward(self, x):
-        return torch.fft.fft2(x, dim=(-2, -1))
+        return torch.fft.fft2(x, dim=(-2, -1)).real
 
 
 class MHPermutMix(nn.Module):
-    def __init__(self, embed_dim: int, token_dim: int, num_heads: int, out_channels: int):
+    def __init__(
+        self, embed_dim: int, token_dim: int, num_heads: int, out_channels: int, num_encoders: int
+    ):
         super().__init__()
         d = embed_dim * token_dim
         self.num_heads = num_heads
         self.token_dim = token_dim
         self.embed_dim = embed_dim
         self.concat_dim = self.embed_dim * self.num_heads
-        signs = torch.randint(0, 2, (num_heads, d), dtype=torch.float32)
-        signs = signs * 2 - 1
-        self.register_buffer("signs", signs.unsqueeze(0))
-        perms = torch.stack([torch.randperm(d) for _ in range(num_heads)])
+        signs = torch.stack([
+            torch.randint(0, 2, (num_heads, d), dtype=torch.float32).unsqueeze(0) * 2 - 1
+            for _ in range(num_encoders)
+        ])
+        self.register_buffer("signs", signs)
+        perms = torch.stack([
+            torch.stack([torch.randperm(d) for _ in range(num_heads)]) for _ in range(num_encoders)
+        ])
         self.register_buffer("perms", perms)
-        self.linear = SpectreLinear(embed_dim * num_heads, out_channels)
+        # self.linear = LowRankLinear(embed_dim * num_heads, out_channels)  # , bias=False)
+        self.linear = nn.Linear(embed_dim * num_heads, out_channels, bias=False)
 
-    def forward(self, x):
+        in_channels = embed_dim * num_heads
+        self.linear = nn.Sequential(
+            nn.Linear(in_channels, in_channels // 2, bias=False),
+            nn.Linear(in_channels // 2, out_channels, bias=False),
+        )
+
+    def forward(self, x: torch.Tensor, encoder_num: int):
         B = x.shape[0]
-        x = x.view(B, -1)
-        x = x[:, self.perms] * self.signs
-        x = x.view(B, self.token_dim, self.concat_dim)
-        return x
-        # return self.linear(x)
+        # B -- batch, N -- number of tokens, E -- embeddings, H -- number of heads
+        x = x.view(B, -1)  # [B, N * E]
+        x = x[:, self.perms[encoder_num]] * self.signs[encoder_num]  # [B, H, N * E]
+        x = x.view(B, self.token_dim, self.concat_dim)  # [B, N, H * E]
+        return self.linear(x)
 
 
 # %% Visualize orhtogonal features
 batch_size = 16
 num_patches = 64
 embed_dim = 512
-num_heads = 8
+num_heads = 1
 input = torch.randn(batch_size, num_patches, embed_dim)
-mh_permut = MHPermutMix(embed_dim, num_patches, num_heads, embed_dim)
+mh_permut = MHPermutMix(embed_dim, num_patches, num_heads, embed_dim, 4)
 with profile(activities=[ProfilerActivity.CPU], record_shapes=True, with_modules=True) as prof:
-    vecs = mh_permut(input)
+    vecs = mh_permut(input, 1)
+    # torch.fft.fft2(input, dim=(-2, -1))
 print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
-print(vecs[0].shape)
-print(vecs[0].flatten(0).shape)
 # print(
 #     torch.dot(
 #         vecs.view(batch_size, num_patches, embed_dim * num_heads)[..., :embed_dim].flatten(0),
@@ -77,7 +92,7 @@ print(vecs[0].flatten(0).shape)
 
 batch_size = 16
 num_patches = 32
-num_heads = 8
+num_heads = 1
 # dims = range(2, 512)
 dims = 2 ** np.array(np.linspace(4, 13, 9), dtype=np.int32)
 iters = 500
@@ -87,17 +102,17 @@ with torch.no_grad():
     approx_gpu_time = []
     for dim in dims:
         input = torch.randn(batch_size, num_patches, int(dim)).cuda()
-        perm = MHPermutMix(input.shape[-1], input.shape[-2], num_heads, embed_dim).cuda().eval()
+        perm = MHPermutMix(input.shape[-1], input.shape[-2], num_heads, embed_dim, 1).cuda().eval()
         approx_gpu_time.append(
-            timeit.timeit(lambda: perm(input), number=iters, timer=timeit.default_timer) / iters
+            timeit.timeit(lambda: perm(input, 0), number=iters, timer=timeit.default_timer) / iters
         )
 
     approx_cpu_time = []
     for dim in dims:
         input = torch.randn(batch_size, num_patches, int(dim)).cpu()
-        perm = MHPermutMix(input.shape[-1], input.shape[-2], num_heads, embed_dim).cpu().eval()
+        perm = MHPermutMix(input.shape[-1], input.shape[-2], num_heads, embed_dim, 1).cpu().eval()
         approx_cpu_time.append(
-            timeit.timeit(lambda: perm(input), number=iters, timer=timeit.default_timer) / iters
+            timeit.timeit(lambda: perm(input, 0), number=iters, timer=timeit.default_timer) / iters
         )
 
     rfft_cpu_time = []
@@ -131,7 +146,7 @@ plt.ylabel("Time, s")
 plt.grid()
 plt.legend(["MHPermutMix (GPU)", "MHPermutMix (CPU)", "2D FFT (GPU)", "2D FFT (CPU)"])
 plt.tight_layout()
-plt.savefig(f"plots/pytorch_spectremix_h{num_heads}.png")
+plt.savefig(f"../../plots/pytorch_spectremix_h{num_heads}.png")
 
 # %% ONNX performance benchmark
 num_heads = 1

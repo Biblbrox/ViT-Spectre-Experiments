@@ -1,8 +1,13 @@
+import pytorch_lightning as L
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from pytorch_lightning.utilities.types import OptimizerLRScheduler
+from torch import optim
 from torch.nn.modules.transformer import _get_activation_fn, _get_clones
 
 from spectre_vit.models.spectre.layers import MHPermutMix, SpectreLinear
+from spectre_vit.modules.patch_embeddings import PatchEmbedding
 
 
 class Transpose(nn.Module):
@@ -36,25 +41,19 @@ class SpectreEncoderLayer(nn.Module):
     """
 
     def __init__(
-        self,
-        seq_length,
-        d_model,
-        nhead,
-        dim_feedforward,
-        dropout,
-        activation,
+        self, seq_length, d_model, nhead, dim_feedforward, dropout, activation, num_encoders
     ):
         super().__init__()
         bias = True
         layer_norm_eps = 1e-5
-        self.mix_layer = MHPermutMix(d_model, seq_length, nhead, d_model)
+        self.mix_layer = MHPermutMix(d_model, seq_length, nhead, d_model, num_encoders)
         self.linear1 = SpectreLinear(d_model, dim_feedforward)
         self.linear3 = SpectreLinear(dim_feedforward, d_model)
 
         self.norm1 = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias)
         self.norm2 = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
+        self.dropout1 = nn.Dropout(dropout, inplace=True)
+        self.dropout2 = nn.Dropout(dropout, inplace=True)
 
         # Legacy string support for activation function.
         if isinstance(activation, str):
@@ -62,8 +61,8 @@ class SpectreEncoderLayer(nn.Module):
 
         self.activation = activation
 
-    def forward(self, x):
-        x = self.norm1(self.mix_layer(x)) + x
+    def forward(self, x, encoder_num):
+        x = self.norm1(self.mix_layer(x, encoder_num)) + x
         x = self.norm2(x + self._ff_block(x))
         return x
 
@@ -93,9 +92,7 @@ class SpectreEncoder(nn.Module):
     ):
         output = src
         for idx, mod in enumerate(self.layers):
-            output = mod(
-                output,
-            )
+            output = mod(output, idx)
 
         if self.norm is not None:
             output = self.norm(output)
@@ -114,7 +111,7 @@ class SpectralPatchEmbed(nn.Module):
         self.freq_weight_w = nn.Parameter(torch.ones(self.P // 2 + 1))
 
         # Linear projection from spectral patch to embedding
-        self.proj = nn.Linear(in_channels * self.P * (self.P // 2 + 1), embed_dim)
+        self.proj = SpectreLinear(in_channels * self.P * (self.P // 2 + 1), embed_dim)
 
         # CLS token + positional embeddings
         self.cls_token = nn.Parameter(torch.randn(1, 1, embed_dim))
@@ -156,47 +153,68 @@ class SpectralPatchEmbed(nn.Module):
         return x_out
 
 
-class SpectreViT(nn.Module):
-    def __init__(
-        self,
-        img_size=32,
-        patch_size=4,
-        in_channels=3,
-        num_classes=10,
-        embed_dim=768,
-        num_encoders=12,
-        num_heads=12,
-        hidden_dim=3072,
-        dropout=0.1,
-        activation="gelu",
-    ):
+class SpectreViT(L.LightningModule):
+    def __init__(self, c):
         super().__init__()
+        self.c = c
 
-        num_patches = (img_size // patch_size) ** 2
-
-        self.embeddings_block = SpectralPatchEmbed(
-            embed_dim, patch_size, num_patches, dropout, in_channels
-        )
+        num_patches = (c.img_size // c.patch_size) ** 2
 
         encoder_layer = SpectreEncoderLayer(
             seq_length=num_patches + 1,
-            d_model=embed_dim,
-            nhead=num_heads,
-            dim_feedforward=hidden_dim,
-            dropout=dropout,
-            activation=activation,
+            d_model=c.embed_dim,
+            nhead=c.num_heads,
+            dim_feedforward=c.hidden_dim,
+            dropout=c.dropout,
+            activation=c.activation,
+            num_encoders=c.num_encoders,
         )
 
-        self.encoder_blocks = SpectreEncoder(encoder_layer, num_layers=num_encoders)
+        self.encoder = nn.Sequential(
+            SpectralPatchEmbed(c.embed_dim, c.patch_size, num_patches, c.dropout, c.in_channels),
+            SpectreEncoder(encoder_layer, num_layers=c.num_encoders),
+        )
 
-        self.mlp_head = nn.Sequential(SpectreLinear(embed_dim, num_classes))
+        self.decoder = nn.Sequential(SpectreLinear(c.embed_dim, c.num_classes))
 
-    def forward(self, x, return_features=False):
-        x = self.embeddings_block(x)
-        x = self.encoder_blocks(x)
-
+    def forward(self, x, return_features=False) -> torch.Tensor:
+        x = self.encoder(x)
         cls_token = x[:, 0, :]
-        x = self.mlp_head(cls_token)
+        x = self.decoder(cls_token)
         if return_features:
             return x, cls_token
         return x
+
+    def configure_optimizers(self) -> OptimizerLRScheduler:
+        optimizer = optim.AdamW(
+            self.parameters(),
+            betas=self.c.adam_betas,
+            lr=self.c.learning_rate,
+            weight_decay=self.c.adam_weight_decay,
+        )
+        return optimizer
+
+    def training_step(self, train_batch, batch_idx):
+        x, y = train_batch
+
+        y_pred = self.forward(x)
+
+        y_pred_label = torch.argmax(y_pred, dim=1)
+
+        loss = F.cross_entropy(y_pred, y)
+        self.log("train_loss", loss, on_epoch=True)
+        acc = (y_pred_label == y).float().mean()
+        self.log("train_acc", acc)  # Log accuracy to TensorBoard
+        return loss
+
+    def validation_step(self, val_batch, batch_idx):
+        x, y = val_batch
+
+        y_pred = self.forward(x)
+        y_pred_label = torch.argmax(y_pred, dim=1)
+
+        loss = F.cross_entropy(y_pred, y)
+        self.log("val_loss", loss, on_epoch=True)
+        acc = (y_pred_label == y).float().mean()
+        self.log("val_acc", acc)  # Log accuracy to TensorBoard
+        return loss

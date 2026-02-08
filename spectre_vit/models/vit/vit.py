@@ -17,7 +17,6 @@ class ViT(nn.Module):
         hidden_dim=3072,
         dropout=0.1,
         activation="gelu",
-        method="attention",
     ):
         super().__init__()
 

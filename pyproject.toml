@@ -34,7 +34,10 @@ dependencies = [
     "torchvision>=0.24.1",
     "tqdm>=4.66.5",
     "wheel>=0.45.1",
-    "dinov3"
+    "dinov3",
+    "pytorch-lightning>=2.6.1",
+    "litlogger>=0.1.7",
+    "lightning>=2.6.1",
 ]
 
 [[tool.uv.index]]

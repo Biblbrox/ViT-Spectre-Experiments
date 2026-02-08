@@ -4,6 +4,8 @@ import time
 import timeit
 from itertools import product
 
+import polars as pl
+
 sys.path.append("../..")
 
 import matplotlib.pyplot as plt
@@ -14,30 +16,48 @@ import torch.nn as nn
 import torch.profiler as profiler
 
 from spectre_vit.configs.parser import parse_config
+from spectre_vit.models.fnet.fnet import FNet
 from spectre_vit.models.spectre.spectre import SpectreEncoderLayer, SpectreViT
+from spectre_vit.models.vit.vit import ViT
 from spectre_vit.profile.parser import ProfilerParser
 
-# %% Cell 2
-# Model configuration
-config_path = "spectre_vit/configs/spectre_vit_cifar100.py"
-c = parse_config(config_path)
-device = "cuda"
-# %% Overall model performance evaluation for different heads and patch sizes
-# ---------------------------------------------------------------------------
-input_tensor = torch.rand(
-    (c.batch_size, c.in_channels, c.img_size, c.img_size), dtype=torch.float32
-).to(device)
-with torch.no_grad():
-    for patch, heads in product([4, 8], [1, 2, 4, 8]):
+
+# %%
+def get_class(class_name):
+    return getattr(sys.modules[__name__], class_name)
+
+
+@torch.no_grad()
+def test_perf(model_name, dataset, iters=1000, device="cuda"):
+    assert model_name in ["ViT", "SpectreViT", "FNet"]
+    assert dataset in ["cifar100", "mnist"]
+    base_path = "spectre_vit/configs"
+    if model_name == "ViT":
+        c = parse_config(f"{base_path}/vit_{dataset}.py")
+    elif model_name == "SpectreViT":
+        c = parse_config(f"{base_path}/spectre_vit_{dataset}.py")
+    elif model_name == "FNet":
+        c = parse_config(f"{base_path}/fnet_{dataset}.py")
+
+    input_tensor = torch.rand(
+        (c.batch_size, c.in_channels, c.img_size, c.img_size), dtype=torch.float32
+    ).to(device)
+
+    model_params = []
+    model_patches = []
+    model_heads = []
+    model_latency = []
+
+    for patch, heads in product([4, 8], [2, 4, 8]):
         model = (
-            SpectreViT(
+            get_class(model_name)(
                 img_size=c.img_size,
-                patch_size=c.patch_size,
+                patch_size=patch,
                 in_channels=c.in_channels,
                 num_classes=c.num_classes,
                 embed_dim=c.embed_dim,
                 num_encoders=c.num_encoders,
-                num_heads=c.num_heads,
+                num_heads=heads,
                 hidden_dim=c.hidden_dim,
                 dropout=c.dropout,
                 activation=c.activation,
@@ -50,17 +70,29 @@ with torch.no_grad():
             _ = model(input_tensor)
 
         # Timing
-        iterations = 1000
         start_time = time.time()
-        for _ in range(iterations):
+        for _ in range(iters):
             _ = model(input_tensor)
         end_time = time.time()
         total_time = end_time - start_time
         params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        print(
-            f"Average latency over {iterations} iterations for batch: {c.batch_size} with params: {params}, patch: {patch}, heads: {heads}: {total_time / iterations * 1000:.2f} ms"
-        )
+        model_params.append(params)
+        model_patches.append(patch)
+        model_heads.append(heads)
+        model_latency.append(total_time / iters * 1000)
 
+    return pl.DataFrame({
+        "params": model_params,
+        "patch_size": model_patches,
+        "heads": model_heads,
+        "latency, ms": model_latency,
+    })
+
+
+# %% Overall model performance evaluation for different heads and patch sizes
+device = "cuda"
+results = test_perf("FNet", "cifar100")
+print(results)
 
 # %% SpectreLinear performance check
 # ---------------------------------------------------------------------------

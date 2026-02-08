@@ -23,53 +23,34 @@ class BinaryLinear(nn.Module):
         return self.scale * (x @ w_bin.T)
 
 
-# class SignPermuteMix(nn.Module):
-#     def __init__(self, size: int, dim: int):
-#         super().__init__()
-#         self.size = size
-#         self.dim = dim
-#
-#         signs = torch.randint(0, 2, (size,)).float() * 2 - 1
-#         self.register_buffer("signs", signs)
-#
-#         perm = torch.randperm(size)
-#         self.register_buffer("perm", perm)
-#
-#     def forward(self, x: torch.Tensor) -> torch.Tensor:
-#         assert x.shape[self.dim] == self.size, (
-#             f"Expected dim {self.dim} size {self.size}, got {x.shape[self.dim]}"
-#         )
-#
-#         shape = [1] * x.ndim
-#         shape[self.dim] = self.size
-#         signs = self.signs.view(*shape)
-#         x = x * signs
-#
-#         x = torch.index_select(x, dim=self.dim, index=self.perm)
-#
-#         return x
-
-
 class MHPermutMix(nn.Module):
-    def __init__(self, embed_dim: int, token_dim: int, num_heads: int, out_channels: int):
+    def __init__(
+        self, embed_dim: int, token_dim: int, num_heads: int, out_channels: int, num_encoders: int
+    ):
         super().__init__()
         d = embed_dim * token_dim
         self.num_heads = num_heads
         self.token_dim = token_dim
         self.embed_dim = embed_dim
         self.concat_dim = self.embed_dim * self.num_heads
-        signs = torch.randint(0, 2, (num_heads, d), dtype=torch.float32)
-        signs = signs * 2 - 1
-        self.register_buffer("signs", signs.unsqueeze(0))
-        perms = torch.stack([torch.randperm(d) for _ in range(num_heads)])
+        signs = torch.stack([
+            torch.randint(0, 2, (num_heads, d), dtype=torch.float32).unsqueeze(0) * 2 - 1
+            for _ in range(num_encoders)
+        ])
+        self.register_buffer("signs", signs)
+        perms = torch.stack([
+            torch.stack([torch.randperm(d) for _ in range(num_heads)]) for _ in range(num_encoders)
+        ])
         self.register_buffer("perms", perms)
-        self.linear = SpectreLinear(embed_dim * num_heads, out_channels)
+        self.linear = nn.Linear(embed_dim * num_heads, out_channels)  # , bias=False)
 
-    def forward(self, x):
+    #
+    def forward(self, x: torch.Tensor, encoder_num: int):
         B = x.shape[0]
-        x = x.view(B, -1)
-        x = x[:, self.perms] * self.signs
-        x = x.view(B, self.token_dim, self.concat_dim)
+        # B -- batch, N -- number of tokens, E -- embeddings, H -- number of heads
+        x = x.view(B, -1)  # [B, N * E]
+        x = x[:, self.perms[encoder_num]] * self.signs[encoder_num]  # [B, H, N * E]
+        x = x.view(B, self.token_dim, self.concat_dim)  # [B, N, H * E]
         return self.linear(x)
 
 
