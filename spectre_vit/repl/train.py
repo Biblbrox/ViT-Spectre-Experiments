@@ -4,6 +4,7 @@ import random
 import sys
 
 import lightning.pytorch as L
+from lightning import Fabric
 
 sys.path.append("../..")
 
@@ -57,9 +58,10 @@ elif dataset_name == "mnist":
     datamodule = MNISTDataModule(c)
 
 # %%
-use_amp = True
 logger = TensorBoardLogger("../../runs/", name=experiment_name, version=1)
-trainer = L.Trainer(accelerator="gpu", devices=1, logger=logger, max_epochs=c.epochs)
+trainer = L.Trainer(
+    accelerator="gpu", devices=1, logger=logger, max_epochs=c.epochs, precision="16-mixed"
+)
 trainer.fit(model, datamodule=datamodule)
 
 # %%

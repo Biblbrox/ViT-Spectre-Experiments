@@ -17,5 +17,3 @@ num_encoders = 4
 # embed_dim = 512
 embed_dim = 512
 num_patches = (img_size // patch_size) ** 2  # 49
-use_spectre = True
-spectre_threshold = 1.0

@@ -1,4 +1,4 @@
-_base_ = "default.py"
+__base__ = "default.py"
 
 batch_size = 8
 val_batch_size = 512
@@ -19,4 +19,3 @@ random_seed = 42
 # embed_dim = 512
 embed_dim = 512
 num_patches = (img_size // patch_size) ** 2  # 49
-use_spectre = True
