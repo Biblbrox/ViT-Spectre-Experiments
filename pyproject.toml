@@ -35,9 +35,11 @@ dependencies = [
     "tqdm>=4.66.5",
     "wheel>=0.45.1",
     "dinov3",
-    "pytorch-lightning>=2.6.1",
     "litlogger>=0.1.7",
     "lightning>=2.6.1",
+    "litdata>=0.2.60",
+    "huggingface-hub>=1.4.1",
+    "pyarrow>=23.0.0",
 ]
 
 [[tool.uv.index]]

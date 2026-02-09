@@ -1,8 +1,8 @@
-import pytorch_lightning as L
+import lightning.pytorch as L
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from pytorch_lightning.utilities.types import OptimizerLRScheduler
+from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from torch import optim
 from torch.nn.modules.transformer import _get_activation_fn, _get_clones
 

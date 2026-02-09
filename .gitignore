@@ -18,6 +18,8 @@ inference/target
 # Project files
 .zed
 .ropeproject/
+.env
+spectre_vit/configs/default.py
 
 
 # Weight files
