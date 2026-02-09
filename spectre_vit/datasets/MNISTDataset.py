@@ -15,7 +15,7 @@ class MNISTDataModule(DefaultDataset):
         self.dataset_uri = "hf://datasets/ylecun/mnist"
         self.train_transform = v2.Compose([
             v2.PILToTensor(),
-            v2.Resize((32, 32)),
+            v2.Resize((28, 28)),
             v2.RandomHorizontalFlip(p=0.5),
             v2.ColorJitter(0.4, 0.4, 0.4, 0.1),
             v2.RandomGrayscale(p=0.2),
@@ -31,7 +31,7 @@ class MNISTDataModule(DefaultDataset):
 
         self.val_transform = v2.Compose([
             v2.PILToTensor(),
-            v2.Resize((32, 32)),
+            v2.Resize((28, 28)),
             v2.ToDtype(torch.float32, scale=True),
             v2.Normalize(
                 mean=(0.5071, 0.4867, 0.4408),

@@ -1,10 +1,9 @@
 __base__ = "default.py"
 
-index_path = None
 batch_size = 8
 val_batch_size = 512
 epochs = 1000
-num_classes = 100
+num_classes = 1000
 patch_size = 4
 img_size = 224
 in_channels = 3

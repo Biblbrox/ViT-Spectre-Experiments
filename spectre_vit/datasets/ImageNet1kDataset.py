@@ -15,7 +15,7 @@ class ImageNet1kDataModule(DefaultDataset):
         self.dataset_uri = "hf://datasets/ILSVRC/imagenet-1k"
         self.train_transform = v2.Compose([
             v2.PILToTensor(),
-            v2.Resize((32, 32)),
+            v2.Resize((224, 224)),
             v2.RandomHorizontalFlip(p=0.5),
             v2.ColorJitter(0.4, 0.4, 0.4, 0.1),
             v2.RandomGrayscale(p=0.2),
@@ -31,7 +31,7 @@ class ImageNet1kDataModule(DefaultDataset):
 
         self.val_transform = v2.Compose([
             v2.PILToTensor(),
-            v2.Resize((32, 32)),
+            v2.Resize((224, 224)),
             v2.ToDtype(torch.float32, scale=True),
             v2.Normalize(
                 mean=(0.5071, 0.4867, 0.4408),
@@ -66,12 +66,12 @@ class ImageNet1kDataModule(DefaultDataset):
         labels = []
 
         for img_dict in batch:
-            image = Image.open(io.BytesIO(img_dict["img"]["bytes"]))
+            image = Image.open(io.BytesIO(img_dict["image"]["bytes"]))
             if mode == "train":
                 tensor_img = self.train_transform(image)
             else:
                 tensor_img = self.val_transform(image)
             imgs.append(tensor_img)
-            labels.append(img_dict["fine_label"])
+            labels.append(img_dict["label"])
 
         return torch.stack(imgs), torch.tensor(labels, dtype=torch.long)
