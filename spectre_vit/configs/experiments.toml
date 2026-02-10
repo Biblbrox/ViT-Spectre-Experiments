@@ -23,7 +23,6 @@ activation = "gelu"
 num_encoders = 4
 embed_dim = 512
 # embed_dim = 256
-num_patches = 49  # (img_size // patch_size) ** 2
 
 [spectre_vit.cifar100]
 batch_size = 8
@@ -43,7 +42,6 @@ activation = "gelu"
 num_encoders = 4
 embed_dim = 512
 # embed_dim = 256
-num_patches = 49  # (img_size // patch_size) ** 2
 
 [spectre_vit.mnist]
 batch_size = 8
@@ -62,7 +60,6 @@ activation = "gelu"
 num_encoders = 4
 embed_dim = 16  # (patch_size**2) * in_channels
 # embed_dim = 768
-num_patches = 49  # (img_size // patch_size) ** 2
 
 ## FNet
 [fnet.cifar100]
@@ -83,7 +80,6 @@ activation = "gelu"
 num_encoders = 4
 # embed_dim = 512
 embed_dim = 512
-num_patches = 49  # (img_size // patch_size) ** 2  # 49
 
 [fnet.mnist]
 batch_size = 8
@@ -103,7 +99,6 @@ activation = "gelu"
 num_encoders = 4
 # embed_dim = 512
 embed_dim = 512
-num_patches = 49  # (img_size // patch_size) ** 2  # 49
 
 ## ViT
 [vit.cifar100]
@@ -125,7 +120,6 @@ num_encoders = 4
 random_seed = 42
 # embed_dim = 512
 embed_dim = 512
-num_patches = 49  # (img_size // patch_size) ** 2  # 49
 
 [vit.mnist]
 batch_size = 8
@@ -143,4 +137,3 @@ adam_betas = [0.9, 0.999]
 activation = "gelu"
 num_encoders = 4
 embed_dim = 512
-num_patches = 49  # (img_size // patch_size) ** 2
