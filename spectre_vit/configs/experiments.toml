@@ -1,0 +1,146 @@
+[common]
+random_seed = 42
+learning_rate = 1e-3
+index_path = nan  # Substitute for None
+cache_dir = "/var/cache"
+
+## Spectre ViT
+[spectre_vit.imagenet1k]
+batch_size = 32
+val_batch_size = 64
+epochs = 1000
+num_classes = 1000
+patch_size = 16
+img_size = 224
+in_channels = 3
+num_heads = 8
+dropout = 0.001
+# hidden_dim = 512
+hidden_dim = 768
+adam_weight_decay = 0.01
+adam_betas = [0.9, 0.999]
+activation = "gelu"
+num_encoders = 4
+embed_dim = 512
+# embed_dim = 256
+num_patches = 49  # (img_size // patch_size) ** 2
+
+[spectre_vit.cifar100]
+batch_size = 8
+val_batch_size = 512
+epochs = 1000
+num_classes = 100
+patch_size = 4
+img_size = 32
+in_channels = 3
+num_heads = 8
+dropout = 0.001
+# hidden_dim = 512
+hidden_dim = 768
+adam_weight_decay = 0.01
+adam_betas = [0.9, 0.999]
+activation = "gelu"
+num_encoders = 4
+embed_dim = 512
+# embed_dim = 256
+num_patches = 49  # (img_size // patch_size) ** 2
+
+[spectre_vit.mnist]
+batch_size = 8
+val_batch_size = 512
+epochs = 1000
+num_classes = 100
+patch_size = 4
+img_size = 28
+in_channels = 3
+num_heads = 8
+dropout = 0.001
+hidden_dim = 256
+adam_weight_decay = 0.01
+adam_betas = [0.9, 0.999]
+activation = "gelu"
+num_encoders = 4
+embed_dim = 16  # (patch_size**2) * in_channels
+# embed_dim = 768
+num_patches = 49  # (img_size // patch_size) ** 2
+
+## FNet
+[fnet.cifar100]
+batch_size = 8
+val_batch_size = 512
+epochs = 1000
+num_classes = 100
+patch_size = 4
+img_size = 32
+in_channels = 3
+num_heads = 16
+dropout = 0.001
+hidden_dim = 768
+# hidden_dim = 768
+adam_weight_decay = 0.01
+adam_betas = [0.9, 0.999]
+activation = "gelu"
+num_encoders = 4
+# embed_dim = 512
+embed_dim = 512
+num_patches = 49  # (img_size // patch_size) ** 2  # 49
+
+[fnet.mnist]
+batch_size = 8
+val_batch_size = 512
+epochs = 1000
+num_classes = 100
+patch_size = 4
+img_size = 28
+in_channels = 3
+num_heads = 16
+dropout = 0.001
+hidden_dim = 768
+# hidden_dim = 768
+adam_weight_decay = 0.01
+adam_betas = [0.9, 0.999]
+activation = "gelu"
+num_encoders = 4
+# embed_dim = 512
+embed_dim = 512
+num_patches = 49  # (img_size // patch_size) ** 2  # 49
+
+## ViT
+[vit.cifar100]
+batch_size = 8
+val_batch_size = 512
+epochs = 1000
+learning_rate = 1e-3
+num_classes = 100
+patch_size = 4
+img_size = 32
+in_channels = 3
+num_heads = 16
+dropout = 0.001
+hidden_dim = 768
+adam_weight_decay = 0.01
+adam_betas = [0.9, 0.999]
+activation = "gelu"
+num_encoders = 4
+random_seed = 42
+# embed_dim = 512
+embed_dim = 512
+num_patches = 49  # (img_size // patch_size) ** 2  # 49
+
+[vit.mnist]
+batch_size = 8
+val_batch_size = 512
+epochs = 1000
+num_classes = 100
+patch_size = 4
+img_size = 28
+in_channels = 3
+num_heads = 16
+dropout = 0.001
+hidden_dim = 768
+adam_weight_decay = 0.01
+adam_betas = [0.9, 0.999]
+activation = "gelu"
+num_encoders = 4
+embed_dim = 512
+num_patches = 49  # (img_size // patch_size) ** 2

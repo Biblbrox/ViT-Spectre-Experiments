@@ -2,9 +2,9 @@
 # os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import random
 import sys
+from pathlib import Path
 
 import lightning.pytorch as L
-from lightning import Fabric
 
 sys.path.append("../..")
 
@@ -12,7 +12,7 @@ import numpy as np
 import torch
 from lightning.pytorch.loggers import TensorBoardLogger
 
-from spectre_vit.configs.parser import parse_config
+from spectre_vit.configs.toml_parser import get_experiment_config
 from spectre_vit.datasets.CIFAR100Dataset import CIFAR100DataModule
 from spectre_vit.datasets.ImageNet1kDataset import ImageNet1kDataModule
 from spectre_vit.datasets.MNISTDataset import MNISTDataModule
@@ -24,8 +24,17 @@ from spectre_vit.models.vit.vit import ViT
 # Read params from config
 model_name = "spectre_vit"
 dataset_name = "imagenet1k"
-config_path = f"{model_name}/configs/{model_name}_{dataset_name}.py"
-c = parse_config(config_path)
+config_filepath = Path("spectre_vit/configs/experiments.toml").resolve()
+assert config_filepath.exists()
+local_config_filepath = config_filepath.parent / "experiments.local.toml"
+c = get_experiment_config(
+    model_name,
+    dataset_name,
+    config_filepath,
+    local_config_filepath if local_config_filepath.exists() else None,
+)
+
+print(c)
 experiment_name = f"{model_name}_{c.num_heads}h_hid{c.hidden_dim}_emb{c.embed_dim}_patch{c.patch_size}_enc{c.num_encoders}_{dataset_name}"
 
 random.seed(c.random_seed)
@@ -60,7 +69,11 @@ elif dataset_name == "mnist":
 # %%
 logger = TensorBoardLogger("../../runs/", name=experiment_name, version=1)
 trainer = L.Trainer(
-    accelerator="gpu", devices=1, logger=logger, max_epochs=c.epochs, precision="16-mixed"
+    accelerator="gpu",
+    devices=1,
+    logger=logger,
+    max_epochs=c.epochs,
+    precision="16-mixed",
 )
 trainer.fit(model, datamodule=datamodule)
 

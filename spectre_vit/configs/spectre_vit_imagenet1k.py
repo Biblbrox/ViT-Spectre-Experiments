@@ -1,7 +1,7 @@
 __base__ = "default.py"
 
-batch_size = 8
-val_batch_size = 16
+batch_size = 32
+val_batch_size = 64
 epochs = 1000
 num_classes = 1000
 patch_size = 16
