@@ -20,6 +20,7 @@ inference/target
 .ropeproject/
 .env
 spectre_vit/configs/default.py
+*.local.toml
 
 
 # Weight files
