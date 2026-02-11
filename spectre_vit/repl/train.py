@@ -24,7 +24,7 @@ from spectre_vit.models.vit.vit import ViT
 # Read params from config
 model_name = "spectre_vit"
 dataset_name = "imagenet1k"
-config_filepath = Path("spectre_vit/configs/experiments.toml").resolve()
+config_filepath = Path("../../spectre_vit/configs/experiments.toml").resolve()
 assert config_filepath.exists()
 local_config_filepath = config_filepath.parent / "experiments.local.toml"
 c = get_experiment_config(
@@ -34,7 +34,6 @@ c = get_experiment_config(
     local_config_filepath if local_config_filepath.exists() else None,
 )
 
-print(c)
 experiment_name = f"{model_name}_{c.num_heads}h_hid{c.hidden_dim}_emb{c.embed_dim}_patch{c.patch_size}_enc{c.num_encoders}_{dataset_name}"
 
 random.seed(c.random_seed)

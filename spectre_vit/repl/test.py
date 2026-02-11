@@ -3,6 +3,7 @@ import sys
 import time
 import timeit
 from itertools import product
+from pathlib import Path
 
 import polars as pl
 
@@ -16,6 +17,7 @@ import torch.nn as nn
 import torch.profiler as profiler
 
 from spectre_vit.configs.parser import parse_config
+from spectre_vit.configs.toml_parser import get_experiment_config
 from spectre_vit.models.fnet.fnet import FNet
 from spectre_vit.models.spectre.spectre import SpectreEncoderLayer, SpectreViT
 from spectre_vit.models.vit.vit import ViT
@@ -29,15 +31,15 @@ def get_class(class_name):
 
 @torch.no_grad()
 def test_perf(model_name, dataset, iters=1000, device="cuda"):
-    assert model_name in ["ViT", "SpectreViT", "FNet"]
-    assert dataset in ["cifar100", "mnist"]
-    base_path = "spectre_vit/configs"
-    if model_name == "ViT":
-        c = parse_config(f"{base_path}/vit_{dataset}.py")
-    elif model_name == "SpectreViT":
-        c = parse_config(f"{base_path}/spectre_vit_{dataset}.py")
-    elif model_name == "FNet":
-        c = parse_config(f"{base_path}/fnet_{dataset}.py")
+    assert model_name in ["vit", "spectre_vit", "fnet"]
+    assert dataset in ["cifar100", "mnist", "imagenet1k"]
+    base_path = "../../spectre_vit/configs"
+    c = get_experiment_config(
+        model_name,
+        dataset,
+        Path(f"{base_path}/experiments.toml"),
+        Path(f"{base_path}/experiments.local.toml"),
+    )
 
     input_tensor = torch.rand(
         (c.batch_size, c.in_channels, c.img_size, c.img_size), dtype=torch.float32
@@ -48,23 +50,15 @@ def test_perf(model_name, dataset, iters=1000, device="cuda"):
     model_heads = []
     model_latency = []
 
+    if model_name == "vit":
+        model_name = "ViT"
+    elif model_name == "spectre_vit":
+        model_name = "SpectreViT"
+    elif model_name == "fnet":
+        model_name = "FNet"
+
     for patch, heads in product([4, 8], [2, 4, 8]):
-        model = (
-            get_class(model_name)(
-                img_size=c.img_size,
-                patch_size=patch,
-                in_channels=c.in_channels,
-                num_classes=c.num_classes,
-                embed_dim=c.embed_dim,
-                num_encoders=c.num_encoders,
-                num_heads=heads,
-                hidden_dim=c.hidden_dim,
-                dropout=c.dropout,
-                activation=c.activation,
-            )
-            .to(device)
-            .eval()
-        )
+        model = get_class(model_name)(c).to(device).eval()
         # Warm-up
         for _ in range(100):
             _ = model(input_tensor)
@@ -91,7 +85,7 @@ def test_perf(model_name, dataset, iters=1000, device="cuda"):
 
 # %% Overall model performance evaluation for different heads and patch sizes
 device = "cuda"
-results = test_perf("FNet", "cifar100")
+results = test_perf("vit", "cifar100")
 print(results)
 
 # %% SpectreLinear performance check
